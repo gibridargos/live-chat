@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<h2>Chat Ruletka</h2>
+
+<div id="container">
+    <video id="localVideo" autoplay muted></video>
+    <video id="remoteVideo" autoplay></video>
+</div>
+
+<button id="nextBtn">Next</button>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let peer = null;
+let partnerId = null;
+
+async function startChat() {
+    const localVideo = document.getElementById("localVideo");
+    const remoteVideo = document.getElementById("remoteVideo");
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+    });
+
+    localVideo.srcObject = stream;
+
+    peer = new RTCPeerConnection();
+
+    // O'z videolarini WebRTC'ga qo'shish
+    stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+    // Qarshi taraf videolarini chiqarish
+    peer.ontrack = event => {
+        remoteVideo.srcObject = event.streams[0];
+    };
+
+    // ICE candidate yuborish
+    peer.onicecandidate = e => {
+        if (e.candidate && partnerId) {
+            socket.emit("signal", {
+                to: partnerId,
+                signal: { candidate: e.candidate }
+            });
+        }
+    };
+
+    // juftlik izlash
+    socket.emit("find_partner");
+}
+
+// Juft topilganda
+socket.on("partner_found", async id => {
+    partnerId = id;
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+
+    socket.emit("signal", {
+        to: id,
+        signal: { offer }
+    });
+});
+
+// Signallarni qabul qilish
+socket.on("signal", async ({ from, signal }) => {
+    partnerId = from;
+
+    if (signal.offer) {
+        await peer.setRemoteDescription(signal.offer);
+
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        socket.emit("signal", {
+            to: from,
+            signal: { answer }
+        });
+    }
+
+    if (signal.answer) {
+        await peer.setRemoteDescription(signal.answer);
+    }
+
+    if (signal.candidate) {
+        try {
+            await peer.addIceCandidate(signal.candidate);
+        } catch {}
+    }
+});
+
+document.getElementById("nextBtn").onclick = () => {
+    window.location.reload();
+};
+
+startChat();
+</script>
+</body>
+</html>
